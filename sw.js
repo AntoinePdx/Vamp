@@ -1,6 +1,6 @@
 // Service worker : garde l'appli en mémoire pour qu'elle s'ouvre hors connexion.
 // Quand tu modifies l'appli, change le numéro de version ci-dessous pour forcer la mise à jour.
-const VERSION = 'vamp-v7';
+const VERSION = 'vamp-v8';
 const APP_FILES = [
   './',
   './index.html',
@@ -12,7 +12,7 @@ const APP_FILES = [
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(VERSION).then(c => c.addAll(APP_FILES)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(VERSION).then(c => c.addAll(APP_FILES.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {

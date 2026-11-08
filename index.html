@@ -54,7 +54,7 @@ body {
   padding-right: max(16px, env(safe-area-inset-right, 0px));
   -webkit-tap-highlight-color: transparent;
 }
-button { font-family: inherit; color: inherit; }
+button { font-family: inherit; color: inherit; touch-action: manipulation; }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .app { max-width: 640px; margin: 0 auto; padding-block: 10px 32px; display: flex; flex-direction: column; gap: 18px; }
 .label { margin: 0 0 8px; font-size: 0.78rem; font-weight: 500; color: var(--muted); }
@@ -63,7 +63,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 
 /* Accord joué à gauche, 4 commandes du son à droite */
 .now { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }
-.now-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+/* Hauteur fixe (nom sur 2 lignes + 3 rangées de notes) : les pads ne bougent pas sous le doigt quand le nom change */
+.now-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: calc(1.9 * clamp(2.1rem, 11vw, 3.5rem) + 98px); }
 .tiles { display: grid; grid-template-columns: repeat(2, 92px); gap: 6px; }
 .tile { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 6px 8px 7px; border: var(--bw) solid var(--rule); border-radius: 6px; background: var(--surface); }
 .tile-top { display: flex; justify-content: space-between; align-items: baseline; gap: 2px; font-size: 0.6rem; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
@@ -466,7 +467,7 @@ body { margin: 0; -webkit-text-size-adjust: 100%; }
       tok, root, flat, off,
       rootName: noteName(root, flat), qual: Q[q].sym + slash, qBase: Q[q].sym, qSlash: slash,
       name: noteName(root, flat) + Q[q].sym + slash,
-      ascii: ((flat ? FLAT : SHARP)[root] + Q[q].sym + (bassRn ? 'on' + (bassFlat ? FLAT : SHARP)[bassPc] : '')).replace(/♭/g,'b').replace(/♯/g,'#').replace(/\//g,'').replace(/#/g,'s'),
+      ascii: ((flat ? FLAT : SHARP)[root] + Q[q].sym + (bassRn ? 'on' + (bassFlat ? FLAT : SHARP)[bassPc] : '')).replace(/♭/g,'b').replace(/♯/g,'#').replace(/°/g,'dim').replace(/\//g,'').replace(/#/g,'s'),
       roman: prettyRn(rn) + Q[q].rn + (bassRn ? '/' + prettyRn(bassRn) : ''),
       pcs: [...new Set([bassPc].concat(ivs.map(i => (root + i) % 12)))],
       bassPc,
@@ -575,8 +576,13 @@ body { margin: 0; -webkit-text-size-adjust: 100%; }
   function showChord(c) {
     const n = $('nowName'), box = $('nowNotes');
     n.classList.toggle('idle', !c); box.classList.toggle('idle', !c);
+    n.style.fontSize = '';
     if (c) {
       n.textContent = c.name;
+      // Nom très long : on réduit la taille pour qu'il tienne sur 2 lignes maximum
+      let fs = parseFloat(getComputedStyle(n).fontSize);
+      const maxH = fs * 0.95 * 2 + 2;
+      while (n.offsetHeight > maxH && fs > 18) { fs -= 2; n.style.fontSize = fs + 'px'; }
       box.innerHTML = c.pcs.map(p => `<span class="note${p === c.root ? ' root' : ''}">${esc(noteName(p, c.flat))}</span>`).join('');
     } else {
       n.textContent = keyLabel();
@@ -820,33 +826,17 @@ body { margin: 0; -webkit-text-size-adjust: 100%; }
     const vs = voiceSuite(st.prog);
     st.prog.forEach((tok, bar) => {
       const c = info(tok), on = bar * 4 * PPQ, off = on + 4 * PPQ - 20;
-      vs[bar].forEach(m => { ce.push({ tick: on, order: 2, data: [0x90, m, 80] }); ce.push({ tick: off, order: 1, data: [0x80, m, 0] }); });
+      // Exactement le voicing qu'on entend sur le pad (un accord répété garde le même voicing)
+      (voicing[tok] || vs[bar]).forEach(m => { ce.push({ tick: on, order: 2, data: [0x90, m, 80] }); ce.push({ tick: off, order: 1, data: [0x80, m, 0] }); });
       be.push({ tick: on, order: 2, data: [0x91, c.bass, 95] }); be.push({ tick: off, order: 1, data: [0x81, c.bass, 0] });
     });
     const head = [0x4d,0x54,0x68,0x64, 0,0,0,6, 0,1, 0,3, (PPQ>>8)&255, PPQ&255];
     return new Uint8Array([...head, ...track(t0), ...track(ce), ...track(be)]);
   }
-  const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
-  function crc32(b) { let c = 0xffffffff; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
-  function zipOne(filename, data) {
-    const fn = new TextEncoder().encode(filename), crc = crc32(data), size = data.length;
-    const u16 = n => [n & 255, (n >> 8) & 255], u32 = n => [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255];
-    const local = [...u32(0x04034b50), ...u16(20), ...u16(0), ...u16(0), ...u16(0), ...u16(0x21), ...u32(crc), ...u32(size), ...u32(size), ...u16(fn.length), ...u16(0)];
-    const localLen = local.length + fn.length + size;
-    const central = [...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0), ...u16(0), ...u16(0), ...u16(0x21), ...u32(crc), ...u32(size), ...u32(size), ...u16(fn.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(0)];
-    const centralLen = central.length + fn.length;
-    const end = [...u32(0x06054b50), ...u16(0), ...u16(0), ...u16(1), ...u16(1), ...u32(centralLen), ...u32(localLen), ...u16(0)];
-    const out = new Uint8Array(localLen + centralLen + end.length); let p = 0;
-    const put = a => { out.set(a, p); p += a.length; };
-    put(local); put(fn); put(data); put(central); put(fn); put(end);
-    return out;
-  }
   const fileBase = () => `${STYLES[st.style].name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace('&','n')}_${FLAT[st.key]}${st.mode === 'min' ? 'm' : ''}_${MIDI_BPM}bpm_${st.prog.map(t => info(t).ascii).join('-')}`.replace(/[^A-Za-z0-9_\-]/g, '');
 
   // ---------- Partage du fichier MIDI ----------
-  // 1) menu de partage du téléphone (AirDrop, Messages, Fichiers…), 2) dans Claude : téléchargement, 3) sinon : fichier .mid
-  let downloads = null;
-  (async () => { try { downloads = window.claude?.use ? await window.claude.use('downloads') : null; } catch (e) { downloads = null; } })();
+  // 1) menu de partage du téléphone (AirDrop, Messages, Fichiers…), 2) sinon : téléchargement du fichier .mid
   function downloadBlob(name, blob) {
     const url = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = url; a.download = name; a.rel = 'noopener';
@@ -860,11 +850,6 @@ body { margin: 0; -webkit-text-size-adjust: 100%; }
     if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
       try { await navigator.share({ files: [file], title: base + '.mid' }); return; }
       catch (e) { if (e && e.name === 'AbortError') return; }
-    }
-    if (downloads) {
-      try { await downloads.save({ filename: base + '.zip', data: new Blob([zipOne(base + '.mid', bytes)]) }); toast('Open the .zip in Files, then import the .mid', 4500); }
-      catch (err) { if (!err || err.code !== 'declined') toast(err && err.code === 'rate_limited' ? 'An export is already running' : 'Could not share here'); }
-      return;
     }
     downloadBlob(base + '.mid', new Blob([bytes], { type: 'audio/midi' })); toast('MIDI file ready');
   }
